@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Token Counter</title>
+<style>
+  :root {
+    --bg: #14171c;
+    --panel: #1c2028;
+    --border: #2a2f3a;
+    --text: #e7e9ee;
+    --muted: #8a90a0;
+    --accent: #4fd1c5;
+    --warn: #e8b04b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 20px 80px;
+  }
+  .wrap { width: 100%; max-width: 720px; }
+  h1 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0 0 28px;
+    line-height: 1.5;
+    max-width: 60ch;
+  }
+  textarea {
+    width: 100%;
+    min-height: 140px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.95rem;
+    font-family: inherit;
+    padding: 14px;
+    resize: vertical;
+    line-height: 1.5;
+  }
+  textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  select, button {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-family: inherit;
+  }
+  button {
+    background: var(--accent);
+    color: #0b1210;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-top: 28px;
+  }
+  .stat { background: var(--panel); padding: 16px; }
+  .stat .n { font-size: 1.4rem; font-weight: 600; }
+  .stat .l { color: var(--muted); font-size: 0.75rem; margin-top: 4px; }
+
+  .cost { color: var(--muted); font-size: 0.85rem; margin-top: 14px; }
+  .cost b { color: var(--warn); }
+
+  .peek-label {
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin: 28px 0 10px;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 0.78rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 7px;
+    white-space: pre;
+    color: var(--accent);
+  }
+  .empty { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
+  .error { color: #e8716a; font-size: 0.85rem; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Token Counter</h1>
+  <p class="sub">
+    Paste text below to see how many tokens it costs an LLM to read 
+    and watch exactly where words get split apart.
+  </p>
+
+  <textarea id="input" placeholder="Type or paste something here...">Paste your text here to see the token count.</textarea>
+
+  <div class="controls">
+    <select id="model"></select>
+    <button id="run">Count tokens</button>
+  </div>
+
+  <div id="results"></div>
+</div>
+
+<script>
+  const API = window.location.origin;
+  const modelSelect = document.getElementById("model");
+  const input = document.getElementById("input");
+  const runBtn = document.getElementById("run");
+  const results = document.getElementById("results");
+
+  async function loadModels() {
+    try {
+      const res = await fetch(`${API}/models`);
+      const data = await res.json();
+      modelSelect.innerHTML = data.models
+        .map(m => `<option value="${m}">${m}</option>`)
+        .join("");
+    } catch (e) {
+      modelSelect.innerHTML = `<option value="gpt-4o-mini">gpt-4o-mini</option>`;
+    }
+  }
+
+  async function runCount() {
+    const text = input.value.trim();
+    if (!text) {
+      results.innerHTML = `<p class="empty">Type something first.</p>`;
+      return;
+    }
+    runBtn.disabled = true;
+    runBtn.textContent = "Counting...";
+    try {
+      const res = await fetch(`${API}/count`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          model: modelSelect.value,
+          peek: 40,
+        }),
+      });
+      if (!res.ok) throw new Error(`API returned ${res.status}`);
+      const d = await res.json();
+
+      const chips = d.peek_tokens
+        .map(t => `<span class="chip">${escapeHtml(t)}</span>`)
+        .join("");
+
+      results.innerHTML = `
+        <div class="stats">
+          <div class="stat"><div class="n">${d.chars}</div><div class="l">characters</div></div>
+          <div class="stat"><div class="n">${d.words}</div><div class="l">words</div></div>
+          <div class="stat"><div class="n">${d.tokens}</div><div class="l">tokens</div></div>
+          <div class="stat"><div class="n">${d.ratio.toFixed(2)}</div><div class="l">tokens / word</div></div>
+        </div>
+        <p class="cost">Estimated cost on <b>${d.model}</b>: $${d.cost.toFixed(6)}</p>
+        <p class="peek-label">First ${d.peek_tokens.length} tokens, decoded individually — each box is one token:</p>
+        <div class="chips">${chips}</div>
+      `;
+    } catch (e) {
+      results.innerHTML = `<p class="error">Couldn't reach the API. Is it running? (uvicorn api:app --reload) — ${e.message}</p>`;
+    } finally {
+      runBtn.disabled = false;
+      runBtn.textContent = "Count tokens";
+    }
+  }
+
+  function escapeHtml(s) {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/ /g, "\u00b7"); // show spaces as a visible middle dot inside chips
+  }
+
+  loadModels();
+  runBtn.addEventListener("click", runCount);
+</script>
+</body>
+</html>
